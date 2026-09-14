@@ -95,7 +95,7 @@ export function BoardPanel(p: BoardPanelProps) {
           position={p.position}
           boardWidth={BOARD_WIDTH}
           arePiecesDraggable={p.interactable}
-          animationDurationInMs={180}
+          animationDurationIn={180}
           customDarkSquareStyle={{ backgroundColor: '#769656' }}
           customLightSquareStyle={{ backgroundColor: '#eeeed2' }}
           customSquareStyles={squareStyles}
