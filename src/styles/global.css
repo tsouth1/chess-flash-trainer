@@ -133,11 +133,10 @@ button { font: inherit; }
   60% { transform: translateX(-4px); }
   80% { transform: translateX(3px); }
 }
-.board-inner { position: relative; margin: 0 auto; } /* width/height set inline by BoardPanel */
-.square-labels { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
-.sq-label {
-  position: absolute; font-size: 11px; font-weight: 700;
-  color: rgba(255, 255, 255, 0.9); text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+.board-inner { position: relative; margin: 0 auto; overflow: hidden; border-radius: 6px; }
+.tray-drop-layer {
+  position: absolute; inset: 0; z-index: 20; display: grid;
+  /* column/row templates are set inline — they depend on the active grid size */
 }
 .sq-label.file { bottom: 3px; transform: translateX(-50%); }
 .sq-label.rank { left: 4px; transform: translateY(-50%); }
