@@ -292,6 +292,7 @@ export function GameScreen({ state, actions }: GameScreenProps) {
       <div className="game-layout">
         <BoardPanel
           grid={grid}
+          showCoordinates={false}
           position={position}
           interactable={interactable}
           activeSquares={activeSet}
