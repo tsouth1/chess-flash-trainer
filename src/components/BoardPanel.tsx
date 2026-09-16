@@ -1,24 +1,28 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Chessboard } from 'react-chessboard';
-import { ALL_SQUARES, ALL_SQUARES_TOP_DOWN, FILES } from '../game/config';
+import { FILES } from '../game/config';
 
 /**
  * Wraps react-chessboard (v4 API, package pinned ^4.7.0).
  *
+ * Active-area CROPPING: react-chessboard always renders an 8×8 grid, but this
+ * game only needs the N×N active area. We keep a full 8×8 board internally and
+ * crop the visible box down to the active area (overflow: hidden + negative
+ * offsets), sizing the container so only the active area occupies layout space.
+ * The anchor logic here MUST mirror config.activeSquaresFor:
+ *   even N → anchored at file a, odd N → anchored at file b.
+ *
  * Responsive sizing: react-chessboard needs a numeric `boardWidth`, so we
- * measure the frame's available width with a ResizeObserver and pass the
- * computed value — capped at 470px, shrinking on phones. The initial measure
- * runs in useLayoutEffect so there's no oversized first paint.
+ * measure the frame's available width (ResizeObserver, first measure in
+ * useLayoutEffect to avoid an oversized first paint) and solve for the internal
+ * board size: boardWidth = visibleSize × 8 / grid.
  */
-const MAX_BOARD_WIDTH = 470;
-
-const VOID_STYLE: CSSProperties = {
-  backgroundColor: '#3c4038',
-  boxShadow: 'inset 0 0 12px rgba(0,0,0,.55)',
-};
+const MAX_VISIBLE_SIZE = 470;
+const MIN_VISIBLE_SIZE = 240;
 
 interface BoardPanelProps {
+  grid: number; // active grid size (4..8) — drives the crop geometry
   position: Record<string, string>;
   interactable: boolean; // only true during the recall phase
   activeSquares: ReadonlySet<string>;
@@ -38,7 +42,13 @@ interface BoardPanelProps {
 export function BoardPanel(p: BoardPanelProps) {
   const [shaking, setShaking] = useState(false);
   const frameRef = useRef<HTMLDivElement>(null);
-  const [boardWidth, setBoardWidth] = useState(MAX_BOARD_WIDTH);
+  const [boardWidth, setBoardWidth] = useState(MAX_VISIBLE_SIZE);
+
+  const grid = p.grid;
+  const startFileIndex = grid % 2 === 0 ? 0 : 1; // mirrors activeSquaresFor()
+  const visibleSize = (boardWidth * grid) / 8;
+  const offsetX = startFileIndex * (boardWidth / 8);  // hidden columns on the left
+  const offsetY = ((8 - grid) * boardWidth) / 8;      // hidden rows on top
 
   useLayoutEffect(() => {
     const el = frameRef.current;
@@ -47,13 +57,14 @@ export function BoardPanel(p: BoardPanelProps) {
       const cs = window.getComputedStyle(el);
       const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
       const avail = el.clientWidth - pad;
-      setBoardWidth(Math.max(240, Math.min(MAX_BOARD_WIDTH, avail)));
+      const visible = Math.max(MIN_VISIBLE_SIZE, Math.min(MAX_VISIBLE_SIZE, avail));
+      setBoardWidth((visible * 8) / grid); // solve internal 8×8 size from desired visible size
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [grid]);
 
   useEffect(() => {
     if (p.shakeKey === 0) return;
@@ -64,11 +75,8 @@ export function BoardPanel(p: BoardPanelProps) {
 
   const squareStyles = useMemo(() => {
     const styles: Record<string, CSSProperties> = {};
-    for (const sq of ALL_SQUARES) {
-      if (!p.activeSquares.has(sq)) styles[sq] = { ...VOID_STYLE };
-    }
     for (const sq of p.flash.green) {
-      styles[sq] = { ...styles[sq], backgroundColor: '#6fce7d', transition: 'background-color 90ms linear' };
+      styles[sq] = { backgroundColor: '#6fce7d', transition: 'background-color 90ms linear' };
     }
     for (const sq of p.flash.red) {
       styles[sq] = { ...styles[sq], backgroundColor: '#e56b6b', transition: 'background-color 90ms linear' };
@@ -81,7 +89,7 @@ export function BoardPanel(p: BoardPanelProps) {
       };
     }
     return styles;
-  }, [p.activeSquares, p.flash, p.cursorSquare, p.interactable]);
+  }, [p.flash, p.cursorSquare, p.interactable]);
 
   const handlePieceDrop = (source: string, target: string): boolean => {
     if (!p.interactable) return false;
@@ -99,43 +107,73 @@ export function BoardPanel(p: BoardPanelProps) {
 
   const dropAllowed = (sq: string) => p.activeSquares.has(sq) && !p.occupiedSquares.has(sq);
 
+  // Active-area squares in top-down row order, for the tray drop grid.
+  const dropSquares: string[] = [];
+  for (let rank = grid; rank >= 1; rank--) {
+    for (let c = 0; c < grid; c++) dropSquares.push(`${FILES[startFileIndex + c]}${rank}`);
+  }
+
+  // Coordinate labels for just the active files/ranks.
+  const labelFiles = FILES.slice(startFileIndex, startFileIndex + grid);
+
   return (
     <div ref={frameRef} className={`board-frame${shaking ? ' shaking' : ''}`}>
-      <div className="board-inner" style={{ width: boardWidth, height: boardWidth }}>
-        <Chessboard
-          position={p.position}
-          boardWidth={boardWidth}
-          arePiecesDraggable={p.interactable}
-          animationDurationInMs={180}
-          customDarkSquareStyle={{ backgroundColor: '#769656' }}
-          customLightSquareStyle={{ backgroundColor: '#eeeed2' }}
-          customSquareStyles={squareStyles}
-          customBoardStyle={{ borderRadius: '4px' }}
-          onPieceDrop={handlePieceDrop}
-          onSquareClick={(square) => {
-            if (p.interactable) p.onSquareClick(square);
-          }}
-        />
+      <div className="board-inner" style={{ width: visibleSize, height: visibleSize }}>
+        {/* The full 8×8 board, shifted so only the active area is inside the
+            visible box. Clipped content can't receive pointer events, so
+            squares outside the active area are unreachable by mouse/touch. */}
+        <div style={{ position: 'absolute', left: -offsetX, top: -offsetY }}>
+          <Chessboard
+            position={p.position}
+            boardWidth={boardWidth}
+            showCoordinates={false}
+            arePiecesDraggable={p.interactable}
+            animationDurationInMs={180}
+            customDarkSquareStyle={{ backgroundColor: '#769656' }}
+            customLightSquareStyle={{ backgroundColor: '#eeeed2' }}
+            customSquareStyles={squareStyles}
+            customBoardStyle={{ borderRadius: '4px' }}
+            onPieceDrop={handlePieceDrop}
+            onSquareClick={(square) => {
+              if (p.interactable) p.onSquareClick(square);
+            }}
+          />
+        </div>
 
-        {/* Coordinate labels: files A–H, ranks 1–8 (pointer-events: none). */}
+        {/* Coordinate labels over the visible area (pointer-events: none). */}
         <div className="square-labels" aria-hidden>
-          {FILES.map((f, i) => (
-            <span key={f} className="sq-label file" style={{ left: `${i * 12.5 + 6.25}%` }}>
+          {labelFiles.map((f, i) => (
+            <span
+              key={f}
+              className="sq-label file"
+              style={{ left: `${(i * 100) / grid + 50 / grid}%` }}
+            >
               {f.toUpperCase()}
             </span>
           ))}
-          {[8, 7, 6, 5, 4, 3, 2, 1].map((r, i) => (
-            <span key={r} className="sq-label rank" style={{ top: `${i * 12.5 + 6.25}%` }}>
+          {Array.from({ length: grid }, (_, i) => grid - i).map((r) => (
+            <span
+              key={r}
+              className="sq-label rank"
+              style={{ top: `${((grid - r) * 100) / grid + 50 / grid}%` }}
+            >
               {r}
             </span>
           ))}
         </div>
 
         {/* Native HTML5 drop-catcher for tray drags (desktop only — iOS Safari
-            has no HTML5 drag; tap-piece-then-tap-square is the touch path). */}
+            has no HTML5 drag; tap-piece-then-tap-square is the touch path).
+            Covers only the visible active area, sized to the grid. */}
         {p.trayDragPieceId !== null && (
-          <div className="tray-drop-layer">
-            {ALL_SQUARES_TOP_DOWN.map((sq) => (
+          <div
+            className="tray-drop-layer"
+            style={{
+              gridTemplateColumns: `repeat(${grid}, 1fr)`,
+              gridTemplateRows: `repeat(${grid}, 1fr)`,
+            }}
+          >
+            {dropSquares.map((sq) => (
               <div
                 key={sq}
                 className={`drop-cell${p.dragOverSquare === sq ? (dropAllowed(sq) ? ' ok' : ' bad') : ''}`}
