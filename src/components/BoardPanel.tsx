@@ -1,24 +1,18 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { Chessboard } from 'react-chessboard';
 import { ALL_SQUARES, ALL_SQUARES_TOP_DOWN, FILES } from '../game/config';
 
 /**
- * Wraps react-chessboard. Written against the v4 API (package is pinned to
- * ^4.7.0, so npm can never install the restructured v5). If you later upgrade
- * to react-chessboard v5, these props move into an `options={{ ... }}` object
- * and are renamed (position → options.position, customSquareStyles →
- * options.squareStyles, etc.) — see the v5 README.
+ * Wraps react-chessboard (v4 API, package pinned ^4.7.0).
  *
- * Patterns mirrored from the repo's MiniPuzzles example: controlled `position`
- * object, onPieceDrop returning true/false for accept/snapback, and
- * customSquareStyles for overlays (void mask, flashes, keyboard cursor).
- *
- * Sub-8×8 grids: react-chessboard always renders 8×8, so squares outside the
- * active area are painted as dark "void" squares and all inputs (drops, clicks,
- * tray drops) are rejected there by validation.
+ * Responsive sizing: react-chessboard needs a numeric `boardWidth`, so we
+ * measure the frame's available width with a ResizeObserver and pass the
+ * computed value — capped at 470px, shrinking on phones. The initial measure
+ * runs in useLayoutEffect so there's no oversized first paint.
  */
-const BOARD_WIDTH = 470;
+const MAX_BOARD_WIDTH = 470;
+
 const VOID_STYLE: CSSProperties = {
   backgroundColor: '#3c4038',
   boxShadow: 'inset 0 0 12px rgba(0,0,0,.55)',
@@ -43,6 +37,23 @@ interface BoardPanelProps {
 
 export function BoardPanel(p: BoardPanelProps) {
   const [shaking, setShaking] = useState(false);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const [boardWidth, setBoardWidth] = useState(MAX_BOARD_WIDTH);
+
+  useLayoutEffect(() => {
+    const el = frameRef.current;
+    if (!el) return;
+    const measure = () => {
+      const cs = window.getComputedStyle(el);
+      const pad = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight);
+      const avail = el.clientWidth - pad;
+      setBoardWidth(Math.max(240, Math.min(MAX_BOARD_WIDTH, avail)));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     if (p.shakeKey === 0) return;
@@ -89,13 +100,13 @@ export function BoardPanel(p: BoardPanelProps) {
   const dropAllowed = (sq: string) => p.activeSquares.has(sq) && !p.occupiedSquares.has(sq);
 
   return (
-    <div className={`board-frame${shaking ? ' shaking' : ''}`}>
-      <div className="board-inner">
+    <div ref={frameRef} className={`board-frame${shaking ? ' shaking' : ''}`}>
+      <div className="board-inner" style={{ width: boardWidth, height: boardWidth }}>
         <Chessboard
           position={p.position}
-          boardWidth={BOARD_WIDTH}
+          boardWidth={boardWidth}
           arePiecesDraggable={p.interactable}
-          animationDurationIn={180}
+          animationDurationInMs={180}
           customDarkSquareStyle={{ backgroundColor: '#769656' }}
           customLightSquareStyle={{ backgroundColor: '#eeeed2' }}
           customSquareStyles={squareStyles}
@@ -120,9 +131,8 @@ export function BoardPanel(p: BoardPanelProps) {
           ))}
         </div>
 
-        {/* Native HTML5 drop-catcher for tray drags (react-chessboard only
-            handles drags that start on the board itself). Only mounted while a
-            tray drag is in flight, so it never interferes with board drags. */}
+        {/* Native HTML5 drop-catcher for tray drags (desktop only — iOS Safari
+            has no HTML5 drag; tap-piece-then-tap-square is the touch path). */}
         {p.trayDragPieceId !== null && (
           <div className="tray-drop-layer">
             {ALL_SQUARES_TOP_DOWN.map((sq) => (
@@ -138,7 +148,7 @@ export function BoardPanel(p: BoardPanelProps) {
                   e.preventDefault();
                   const id = e.dataTransfer.getData('text/plain');
                   p.onDragOverSquareChange(null);
-                  if (id) p.onPlaceFromTray(sq, id); // drop layer ignores the tray-drag id; the transfer id is the truth
+                  if (id) p.onPlaceFromTray(sq, id);
                 }}
               />
             ))}
